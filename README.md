@@ -46,15 +46,47 @@ date found, network, post link, author + headline, post text excerpt, score, one
 
 LinkedIn and Facebook restrict automated access in their Terms of Service. Keep it light: low frequency (1-2 runs a day), your own account and session, public posts only, no bypassing logins or CAPTCHAs, no mass harvesting of private data. You are responsible for compliance with the platforms' terms and applicable law.
 
-## Roadmap
+## Install
 
-- [ ] `queries.yaml` format and runner
-- [ ] LinkedIn post-search collector
-- [ ] Facebook post-search collector
-- [ ] SQLite dedupe + pre-filter
-- [ ] LLM judge (prompt, JSON output, cheap model)
-- [ ] Journal exporters: Google Sheets, Telegram, static dashboard
-- [ ] Scheduler (daily / twice daily)
+```bash
+python3.11+ -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev,browser]"
+cp .env.example .env     # optional: fill in keys, then `set -a; source .env; set +a`
+```
+
+## Run on sample data
+
+```bash
+leadagent run --fixtures      # fictional posts from tests/fixtures/, no network, stub judge without ANTHROPIC_API_KEY
+leadagent list                # stored leads (--status new|contacted|skip)
+leadagent status <url> contacted
+leadagent export --formats csv html telegram   # telegram needs TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
+pytest
+```
+
+Outputs go to `data/out/leads.csv` and `data/out/dashboard.html`; the database is `data/leadagent.db` (`LEADAGENT_DB`).
+With `ANTHROPIC_API_KEY` set, the judge calls the model from `LEADAGENT_MODEL` (default `claude-haiku-5-5`).
+Real LinkedIn/Facebook collection (Playwright, your own logged-in profile) is described in [docs/collectors.md](docs/collectors.md):
+`pip install -e ".[browser]"`, `leadagent browser linkedin` (you sign in manually), then `leadagent run`.
+
+Saved searches and the keyword pre-filter live in `queries.yaml`.
+
+## Status
+
+Done:
+- [x] `queries.yaml` format and loader
+- [x] Collector interface; LinkedIn / Facebook Playwright collectors (persistent profile, manual login, stop on login wall/CAPTCHA); fixture mode
+- [x] Relative-time parsing, `CollectorBlocked` handling, `leadagent browser` helper
+- [x] SQLite storage, dedupe by URL, lead status (new / contacted / skip)
+- [x] Pre-filter: include / exclude keywords, language, post age
+- [x] LLM judge (Anthropic SDK, JSON output, batching, offline stub mode)
+- [x] Exporters: CSV, Telegram, static HTML dashboard
+- [x] CLI: `run`, `export`, `list`, `status`; pytest suite
+
+Roadmap:
+- [ ] Verify/tune LinkedIn and Facebook selectors on live pages (only tested on synthetic HTML so far)
+- [ ] Google Sheets exporter
+- [ ] Scheduler (daily / twice daily, random delays)
 
 ## License
 

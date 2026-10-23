@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leadagent"
+version = "0.1.0"
+description = "Finds public LinkedIn/Facebook posts of people looking for Amazon services; scripts do the work, an LLM only judges."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["PyYAML>=6.0", "anthropic>=0.40"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+browser = ["playwright>=1.40"]  # real LinkedIn/Facebook collectors
+
+[project.scripts]
+leadagent = "leadagent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,37 @@
+[
+  {
+    "url": "https://www.linkedin.com/posts/jane-doe-example_amazon-agency-activity-1001",
+    "author": "Jane Doe (fictional)",
+    "author_headline": "Founder at Example Candle Co",
+    "days_ago": 1,
+    "text": "We sell home goods on Amazon US and sales have stalled. Looking for an Amazon agency that can take over PPC and listing optimization. Any recommendations?"
+  },
+  {
+    "url": "https://www.linkedin.com/posts/mark-roe-example_ppc-activity-1002?utm_source=share",
+    "author": "Mark Roe (fictional)",
+    "author_headline": "Owner, Sample Pet Supplies",
+    "days_ago": 3,
+    "text": "Need an Amazon PPC manager ASAP - our ACOS is out of control. DM me or comment if you have capacity."
+  },
+  {
+    "url": "https://www.linkedin.com/posts/acme-agency-example_hiring-activity-1003",
+    "author": "Acme Growth (fictional)",
+    "author_headline": "Amazon agency",
+    "days_ago": 2,
+    "text": "We're hiring an Amazon PPC specialist! Apply now, remote role."
+  },
+  {
+    "url": "https://www.linkedin.com/posts/old-poster-example_amazon-activity-1004",
+    "author": "Old Poster (fictional)",
+    "author_headline": "Seller",
+    "days_ago": 60,
+    "text": "Looking for an Amazon account manager for my FBA brand."
+  },
+  {
+    "url": "https://www.linkedin.com/posts/sam-lee-example_amazon-activity-1005",
+    "author": "Sam Lee (fictional)",
+    "author_headline": "Marketing consultant",
+    "days_ago": 1,
+    "text": "Our agency offers full Amazon account management for sellers. Book a call today!"
+  }
+]
