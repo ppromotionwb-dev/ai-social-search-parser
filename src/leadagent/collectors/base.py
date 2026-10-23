@@ -9,6 +9,10 @@ from ..models import Post, utcnow
 from ..queries import SavedQuery
 
 
+class CollectorBlocked(RuntimeError):
+    """The network asked for a login / checkpoint / CAPTCHA. We stop and tell the human; we never try to get past it."""
+
+
 class Collector(ABC):
     """Fetches posts for a saved query from one network."""
 
@@ -16,6 +20,9 @@ class Collector(ABC):
 
     @abstractmethod
     def collect(self, query: SavedQuery) -> list[Post]: ...
+
+    def close(self) -> None:
+        """Release resources (browser). Called once at the end of a run."""
 
 
 def load_fixture_posts(path: Path, network: str, query: SavedQuery) -> list[Post]:

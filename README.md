@@ -50,7 +50,7 @@ LinkedIn and Facebook restrict automated access in their Terms of Service. Keep 
 
 ```bash
 python3.11+ -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,browser]"
 cp .env.example .env     # optional: fill in keys, then `set -a; source .env; set +a`
 ```
 
@@ -66,8 +66,8 @@ pytest
 
 Outputs go to `data/out/leads.csv` and `data/out/dashboard.html`; the database is `data/leadagent.db` (`LEADAGENT_DB`).
 With `ANTHROPIC_API_KEY` set, the judge calls the model from `LEADAGENT_MODEL` (default `claude-haiku-5-5`).
-Without `--fixtures`, `leadagent run` stops with a clear `NotImplementedError` message: real collectors are not written yet
-(see [docs/collectors.md](docs/collectors.md)).
+Real LinkedIn/Facebook collection (Playwright, your own logged-in profile) is described in [docs/collectors.md](docs/collectors.md):
+`pip install -e ".[browser]"`, `leadagent browser linkedin` (you sign in manually), then `leadagent run`.
 
 Saved searches and the keyword pre-filter live in `queries.yaml`.
 
@@ -75,7 +75,8 @@ Saved searches and the keyword pre-filter live in `queries.yaml`.
 
 Done:
 - [x] `queries.yaml` format and loader
-- [x] Collector interface + LinkedIn / Facebook stubs backed by fixtures
+- [x] Collector interface; LinkedIn / Facebook Playwright collectors (persistent profile, manual login, stop on login wall/CAPTCHA); fixture mode
+- [x] Relative-time parsing, `CollectorBlocked` handling, `leadagent browser` helper
 - [x] SQLite storage, dedupe by URL, lead status (new / contacted / skip)
 - [x] Pre-filter: include / exclude keywords, language, post age
 - [x] LLM judge (Anthropic SDK, JSON output, batching, offline stub mode)
@@ -83,8 +84,7 @@ Done:
 - [x] CLI: `run`, `export`, `list`, `status`; pytest suite
 
 Roadmap:
-- [ ] Real LinkedIn post-search collector (Playwright, user's own logged-in session)
-- [ ] Real Facebook post-search collector
+- [ ] Verify/tune LinkedIn and Facebook selectors on live pages (only tested on synthetic HTML so far)
 - [ ] Google Sheets exporter
 - [ ] Scheduler (daily / twice daily, random delays)
 

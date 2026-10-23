@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 from leadagent.cli import main
 from leadagent.collectors import get_collectors
 from leadagent.judge import Judge
@@ -21,11 +19,6 @@ def test_pipeline_on_fixtures_is_idempotent():
     n = s.count()
     second = run_pipeline(queries, cfg, get_collectors(FIX), s, Judge(api_key=""))
     assert s.count() == n and second.judged == 0
-
-
-def test_real_collectors_not_implemented():
-    with pytest.raises(NotImplementedError):
-        get_collectors()["linkedin"].collect(load_queries(ROOT / "queries.yaml")[0][0])
 
 
 def test_cli_run_creates_outputs(tmp_path, monkeypatch):

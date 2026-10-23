@@ -1,21 +1,38 @@
 from __future__ import annotations
 
-from pathlib import Path
+from urllib.parse import quote
 
-from ..models import Post
 from ..queries import SavedQuery
-from .base import Collector, load_fixture_posts
+from .browser import BrowserCollector
+
+# Runs inside the page. Selectors are the single place to update when LinkedIn changes its markup.
+EXTRACT_JS = r"""
+() => {
+  const out = [], seen = new Set();
+  document.querySelectorAll('[data-urn^="urn:li:activity"], [data-chameleon-result-urn^="urn:li:activity"]').forEach(el => {
+    const urn = el.getAttribute('data-urn') || el.getAttribute('data-chameleon-result-urn');
+    if (!urn || seen.has(urn)) return;
+    seen.add(urn);
+    const q = s => { const n = el.querySelector(s); return n ? n.innerText.trim() : ''; };
+    out.push({
+      url: 'https://www.linkedin.com/feed/update/' + urn + '/',
+      author: q('.update-components-actor__title span[aria-hidden="true"]') || q('.update-components-actor__title'),
+      headline: q('.update-components-actor__description'),
+      text: q('.update-components-text') || q('.feed-shared-update-v2__description'),
+      time_text: q('.update-components-actor__sub-description'),
+    });
+  });
+  return out;
+}
+"""
 
 
-class LinkedInCollector(Collector):
+class LinkedInCollector(BrowserCollector):
     network = "linkedin"
+    login_url = "https://www.linkedin.com/login"
+    extract_js = EXTRACT_JS
 
-    def __init__(self, fixtures: str | Path | None = None):
-        self.fixtures = Path(fixtures) if fixtures else None
-
-    def collect(self, query: SavedQuery) -> list[Post]:
-        if self.fixtures is None:
-            raise NotImplementedError(
-                "Real LinkedIn collection is not implemented yet. It will drive Playwright in the user's own "
-                "logged-in session (see docs/collectors.md). Use --fixtures to run on sample data.")
-        return load_fixture_posts(self.fixtures / "linkedin.json", self.network, query)
+    def search_url(self, query: SavedQuery) -> str:
+        window = "past-24h" if query.max_age_days <= 1 else "past-week" if query.max_age_days <= 7 else "past-month"
+        return ("https://www.linkedin.com/search/results/content/?keywords=" + quote(query.query)
+                + f'&datePosted=%22{window}%22&sortBy=%22date_posted%22')

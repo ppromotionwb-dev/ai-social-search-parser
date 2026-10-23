@@ -36,11 +36,7 @@ def cmd_run(args) -> int:
     judge = Judge()
     if judge.is_stub:
         print("note: ANTHROPIC_API_KEY not set — using stub judge", file=sys.stderr)
-    try:
-        stats = run_pipeline(queries, cfg, get_collectors(args.fixtures), storage, judge)
-    except NotImplementedError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
+    stats = run_pipeline(queries, cfg, get_collectors(args.fixtures), storage, judge)
     print(f"collected={stats.collected} duplicates={stats.duplicates} prefiltered={stats.prefiltered} "
           f"judged={stats.judged} leads={stats.leads}")
     for err in stats.errors:
@@ -57,6 +53,12 @@ def cmd_export(args) -> int:
 def cmd_list(args) -> int:
     for r in _storage(args).leads(status=args.status):
         print(f"{r['score']:>3}  {r['status']:<9} {r['network']:<8} {r['url']}\n     {r['reason']}")
+    return 0
+
+
+def cmd_browser(args) -> int:
+    from .collectors.browser import open_for_manual_login
+    open_for_manual_login(get_collectors()[args.network])
     return 0
 
 
@@ -94,6 +96,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("url")
     s.add_argument("status", choices=STATUSES)
     s.set_defaults(fn=cmd_status)
+
+    b = sub.add_parser("browser", help="open the persistent browser profile so YOU can sign in manually")
+    b.add_argument("network", choices=["linkedin", "facebook"])
+    b.set_defaults(fn=cmd_browser)
 
     args = p.parse_args(argv)
     return args.fn(args)

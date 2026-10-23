@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .collectors import Collector
+from .collectors import Collector, CollectorBlocked
 from .judge import Judge
 from .models import Verdict
 from .prefilter import prefilter
@@ -23,11 +23,25 @@ class RunStats:
 def run_pipeline(queries: list[SavedQuery], cfg: PrefilterConfig, collectors: dict[str, Collector],
                  storage: Storage, judge: Judge) -> RunStats:
     stats = RunStats()
+    blocked: set[str] = set()
+    try:
+        _run(queries, cfg, collectors, storage, judge, stats, blocked)
+    finally:
+        for c in collectors.values():
+            c.close()
+    return stats
+
+
+def _run(queries, cfg, collectors, storage, judge, stats, blocked) -> None:
     for q in queries:
+        if q.network in blocked:
+            continue
         try:
             posts = collectors[q.network].collect(q)
-        except NotImplementedError:
-            raise
+        except CollectorBlocked as e:  # login wall / CAPTCHA: stop this network, do not retry
+            blocked.add(q.network)
+            stats.errors.append(f"{q.network}: {e}")
+            continue
         except Exception as e:  # one failing search must not kill the whole run
             stats.errors.append(f"{q.network} '{q.query}': {e}")
             continue
@@ -48,4 +62,3 @@ def run_pipeline(queries: list[SavedQuery], cfg: PrefilterConfig, collectors: di
             storage.add_post(p, v)
             stats.judged += 1
             stats.leads += v.is_lead
-    return stats

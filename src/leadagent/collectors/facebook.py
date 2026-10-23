@@ -1,21 +1,44 @@
 from __future__ import annotations
 
-from pathlib import Path
+from urllib.parse import quote
 
-from ..models import Post
 from ..queries import SavedQuery
-from .base import Collector, load_fixture_posts
+from .browser import BrowserCollector
+
+# Runs inside the page. Facebook markup is obfuscated and changes often; keep all selectors here.
+EXTRACT_JS = r"""
+() => {
+  const out = [], seen = new Set();
+  const permalink = /\/(posts|permalink|videos)\/|story_fbid|\/groups\/[^/]+\/posts\//;
+  document.querySelectorAll('[role="article"]').forEach(el => {
+    if (el.parentElement && el.parentElement.closest('[role="article"]')) return;  // comments
+    const link = Array.from(el.querySelectorAll('a[href]')).find(a => permalink.test(a.href));
+    if (!link) return;
+    const u = new URL(link.href);
+    const keep = u.searchParams.get('story_fbid');
+    const url = u.origin + u.pathname + (keep ? '?story_fbid=' + keep + '&id=' + (u.searchParams.get('id') || '') : '');
+    if (seen.has(url)) return;
+    seen.add(url);
+    const msg = el.querySelector('[data-ad-preview="message"], [data-ad-comet-preview="message"]');
+    const text = msg ? msg.innerText.trim()
+      : Array.from(el.querySelectorAll('div[dir="auto"]')).map(d => d.innerText.trim()).filter(Boolean).join('\n');
+    const who = el.querySelector('h2 a, h3 a, h2, h3, strong a, strong');
+    out.push({
+      url, text,
+      author: who ? who.innerText.trim() : '',
+      headline: '',
+      time_text: link.getAttribute('aria-label') || link.innerText.trim(),
+    });
+  });
+  return out;
+}
+"""
 
 
-class FacebookCollector(Collector):
+class FacebookCollector(BrowserCollector):
     network = "facebook"
+    login_url = "https://www.facebook.com/login"
+    extract_js = EXTRACT_JS
 
-    def __init__(self, fixtures: str | Path | None = None):
-        self.fixtures = Path(fixtures) if fixtures else None
-
-    def collect(self, query: SavedQuery) -> list[Post]:
-        if self.fixtures is None:
-            raise NotImplementedError(
-                "Real Facebook collection is not implemented yet. It will drive Playwright in the user's own "
-                "logged-in session (see docs/collectors.md). Use --fixtures to run on sample data.")
-        return load_fixture_posts(self.fixtures / "facebook.json", self.network, query)
+    def search_url(self, query: SavedQuery) -> str:
+        return "https://www.facebook.com/search/posts?q=" + quote(query.query)
