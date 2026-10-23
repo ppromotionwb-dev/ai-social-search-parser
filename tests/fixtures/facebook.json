@@ -1,0 +1,30 @@
+[
+  {
+    "url": "https://www.facebook.com/groups/example-fba-sellers/posts/2001/",
+    "author": "Chris Park (fictional)",
+    "author_headline": "",
+    "days_ago": 0,
+    "text": "Hi all, can anyone recommend a reliable Amazon listing optimization freelancer or agency? Our main ASIN lost its ranking."
+  },
+  {
+    "url": "https://www.facebook.com/groups/example-fba-sellers/posts/2002",
+    "author": "Dana Kim (fictional)",
+    "author_headline": "",
+    "days_ago": 2,
+    "text": "Is Seller Central down for anyone else today? Can't log in."
+  },
+  {
+    "url": "https://www.facebook.com/groups/example-fba-sellers/posts/2003",
+    "author": "Иван Петров (fictional)",
+    "author_headline": "",
+    "days_ago": 1,
+    "text": "Ищу агентство по ведению Amazon, посоветуйте пожалуйста."
+  },
+  {
+    "url": "https://www.linkedin.com/posts/jane-doe-example_amazon-agency-activity-1001/",
+    "author": "Jane Doe (fictional)",
+    "author_headline": "duplicate of a LinkedIn URL",
+    "days_ago": 1,
+    "text": "Duplicate url test: looking for an Amazon agency."
+  }
+]

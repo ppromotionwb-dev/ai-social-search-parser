@@ -1,0 +1,15 @@
+# Saved searches. network: linkedin | facebook
+queries:
+  - {network: linkedin, query: "looking for amazon agency",        max_age_days: 14, language: en}
+  - {network: linkedin, query: "need Amazon PPC manager",           max_age_days: 14, language: en}
+  - {network: linkedin, query: "recommend amazon listing optimization", max_age_days: 14, language: en}
+  - {network: linkedin, query: "looking for amazon account manager", max_age_days: 14, language: en}
+  - {network: facebook, query: "looking for amazon agency",        max_age_days: 14, language: en}
+  - {network: facebook, query: "need help with Amazon PPC",        max_age_days: 14, language: en}
+  - {network: facebook, query: "amazon listing optimization help", max_age_days: 14, language: en}
+  - {network: facebook, query: "amazon account management recommendation", max_age_days: 14, language: en}
+
+# Cheap pre-filter applied before the LLM (case-insensitive substring match).
+prefilter:
+  include: [amazon, fba, "seller central", ppc]   # post must contain at least one
+  exclude: ["we are hiring", "we're hiring", "job opening", "apply now", "dm me for", "our agency offers"]

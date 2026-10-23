@@ -6,3 +6,5 @@ node_modules/
 data/
 *.session
 cookies*.json
+*.egg-info/
+.pytest_cache/
