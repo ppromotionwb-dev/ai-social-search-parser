@@ -1,8 +1,7 @@
-.env
+# секреты и накопленное на компьютере агента
+config.json
+outbox/
+sostoyanie/
+ПАУЗА.txt
 *.log
-__pycache__/
-node_modules/
-.venv/
-data/
-*.session
-cookies*.json
+*.zip

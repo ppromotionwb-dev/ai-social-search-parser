@@ -1,61 +1,28 @@
-# ai-social-search-parser
+# lead-agent — агент лидов из соцсетей
 
-A lead-finding agent for **LinkedIn** and **Facebook** posts.
+Второй агент агентства (первый — агент маркетплейсов, `ppromotionwb-dev/marketplace-agent`). Работает на **отдельном
+компьютере**: Claude Code по расписанию открывает в обычном Chrome (Claude in Chrome, вход в Facebook выполнил человек)
+поиск постов, скрипт-сборщик в странице отбирает посты, где селлер сам ищет Amazon-агентство или специалиста, Claude
+оценивает короткую пачку, отправщик без ИИ шлёт лиды на Пульт — пространство «Лиды».
 
-People publicly post things like *"looking for an Amazon agency"*, *"need someone to manage our Amazon store"*, *"recommend an Amazon PPC specialist"*. If you type that into LinkedIn or Facebook search (filter: Posts), you see them. This project automates that routine: once or twice a day it runs a set of saved searches, collects the new posts, lets an LLM decide which ones are real leads, and writes links to a journal / dashboard.
+Принцип: механику делают скрипты, Claude только судит.
 
-## Core principle: scripts do the work, AI only thinks
-
-A human does this by hand in a few minutes a day. Everything mechanical is a plain script; the LLM is called only for the part that needs judgment.
-
-| Step | Done by |
+| Шаг | Кто |
 |---|---|
-| Run saved search queries on each network | script |
-| Scroll, open results, extract post text, author, date, link | script |
-| Drop duplicates and already-seen posts (local DB) | script |
-| Cheap keyword / language / age pre-filter | script |
-| **Is this a real buyer of the service? How relevant, how urgent, why?** | **LLM** |
-| Write result to the journal (Google Sheet / Telegram / web dashboard) | script |
-| Schedule (1-2 runs a day, with random delays) | script |
+| Запросы и пауза с Пульта, отправка, сигнал «на связи» | `otpravka.ps1` |
+| Листать выдачу, читать посты, пока они на экране, ссылка/автор/группа/дата/текст | `sbor.js` (в странице) |
+| Отсеять виденное (localStorage), продающие посты исполнителей, старое, не про Amazon | `sbor.js` |
+| Это заказчик? Оценка 0–10 и одна строка «почему» | Claude по `pravila-otbora.md` |
+| Разбор лидов людьми, статусы, Telegram продаж | Пульт (`marketplace-agent/server`, `src/leads.js`, `views/leads.js`) |
 
-The LLM gets only a short batch of already-cleaned posts, so a run costs very little.
+## Состав
+- `skills/lidy-fb/` — `SKILL.md`, `sbor.js`, `pravila-otbora.md`, `zaprosy-po-umolchaniyu.json`, `otpravka.ps1`, `config.example.json`
+- `install.ps1`, `install.bat` — установка на компьютер агента лидов; `CLAUDE.md` — «Установи агента лидов»
+- Контракт с Пультом — `marketplace-agent/server/LEADS.md`
 
-## Flow
+LinkedIn — следующим скиллом `lidy-li` рядом, с тем же отправщиком.
 
-```
-queries.yaml  (saved searches: "looking for amazon agency", "need Amazon PPC", ...)
-      |
-      v
-runner  --> LinkedIn collector / Facebook collector   (your own logged-in browser session)
-      |
-      v
-extract + normalize --> dedupe (SQLite) --> keyword/age pre-filter
-      |
-      v
-LLM judge: lead / not lead, score, reason, language   (only step using AI)
-      |
-      v
-journal: Google Sheets / Telegram / static dashboard  (link to post, author, why it matches)
-```
-
-## Output (one row per lead)
-
-date found, network, post link, author + headline, post text excerpt, score, one-line reason from the LLM, status (new / contacted / skip) for manual follow-up.
-
-## Responsible use
-
-LinkedIn and Facebook restrict automated access in their Terms of Service. Keep it light: low frequency (1-2 runs a day), your own account and session, public posts only, no bypassing logins or CAPTCHAs, no mass harvesting of private data. You are responsible for compliance with the platforms' terms and applicable law.
-
-## Roadmap
-
-- [ ] `queries.yaml` format and runner
-- [ ] LinkedIn post-search collector
-- [ ] Facebook post-search collector
-- [ ] SQLite dedupe + pre-filter
-- [ ] LLM judge (prompt, JSON output, cheap model)
-- [ ] Journal exporters: Google Sheets, Telegram, static dashboard
-- [ ] Scheduler (daily / twice daily)
-
-## License
-
-MIT
+## История
+Первая версия (Python + Playwright, свой браузер) — тег `history-python-playwright`: от неё отказались 27.10.2026 —
+Meta не пускает в автоматизированный браузер (двухфакторная проверка зависала), а вход должен оставаться за человеком
+в обычном Chrome.

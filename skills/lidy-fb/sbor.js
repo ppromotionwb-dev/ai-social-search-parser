@@ -1,0 +1,194 @@
+// Сборщик постов со страницы поиска Facebook (facebook.com/search/posts/?q=…). Работает без ИИ, внутри страницы:
+// листает выдачу, читает посты, пока они на экране (Facebook очищает ушедшие за край), отсеивает уже виденное,
+// чужие предложения услуг, старое и не про Amazon — и отдаёт Claude короткую пачку кандидатов.
+// Claude передаёт сжатую копию (sbor.min.js, собирает tools/build.js) в каждом вызове javascript_tool вместе с
+// __sbor.start({ query: '…' }), потом спрашивает __sbor.result(), пока не придёт итог (см. SKILL.md). Хранить код в
+// странице нельзя: на странице поиска Facebook запрещает eval (CSP), localStorage стирает при загрузке; поэтому в
+// IndexedDB лежит только список виденных постов (проверено 27.10.2026).
+// Ничего не нажимает, кроме «Ещё» в тексте поста; пароли и формы не трогает. Капча, вход, проверка — status, не обход.
+(() => {
+  const VERSION = '2026-10-27.5';
+  const KEEP_DAYS = 120;
+  // про продажи на Amazon: без этих слов пост не наш («PPC» в одиночку — и Google Ads, и Puerto Princesa City)
+  const ON_TOPIC = /amazon|\bfba\b|seller ?central|vendor central|\basin\b|\bacos\b|\btacos\b/i;
+  // пишет исполнитель, а не заказчик: «я делаю PPC», «пишите в личку», «наши услуги», реклама вебинаров и кейсы.
+  // Первые четыре — «я/мы исполнитель»: такой пост отсеивается, даже если в нём есть «looking for»
+  const OFFER = [
+    /\bi'?m\s+\**[A-Z][\w*]+(?:\s[A-Z][\w*]+)?\**,?\s+(?:a|an|your)\b/, /\bi am (?:a|an|your) /i, /\bour clients?\b/i, /\bwe (?:helped|handle|manage|deliver)\b/i,
+    /\bjoin (?:our|my|the) (?:free )?(?:live )?(?:webinar|group|community|course|masterclass)/i, /\b(?:webinar|masterclass|ebook|e-book)\b/i,
+    /\b(?:boost|grow|scale|skyrocket) your (?:sales|business|brand|amazon)/i, /\b(?:struggling with|tired of|stop wasting)\b/i,
+    /\b(?:your|the) (?:e-?commerce |amazon )?(?:growth )?partner\b/i, /[\u{1D400}-\u{1D7FF}]/u, /\bcase study\b/i, /\bwhy (?:you|every seller) needs?\b/i,
+    /\bi (?:specialize|offer|provide|help (?:brands|sellers)|can help|will (?:manage|optimi[sz]e|handle))/i,
+    /\bwe (?:offer|provide|specialize|help (?:brands|sellers)|are (?:an? )?(?:agency|team))/i,
+    /\b(?:dm|inbox|message) me\b/i, /\bdm (?:now|me|for)\b/i, /\bhire me\b/i, /\bmy (?:services|portfolio|expertise)\b/i,
+    /\bour (?:services|agency|team (?:of|can|will))\b/i, /\b(?:services? (?:include|offered)|what i (?:do|offer))\b/i,
+    /\bfree (?:audit|consultation)\b/i, /\bavailable for (?:new )?(?:clients|projects|work)\b/i,
+    /looking for (?:new )?clients/i, /\b(?:open|available) to work\b/i, /✅.*✅.*✅/,
+  ];
+  // пишет заказчик — от первого лица ищет исполнителя или просит рекомендацию; Claude получает только такие посты
+  const ASK = [
+    /\b(?:i|we)(?:'m|'re| am| are)?\s+(?:currently\s+|now\s+|actively\s+)?(?:looking for|in need of|need(?:ing)?|seeking|searching for|trying to find|want(?:ing)? to (?:hire|find|work with)|hiring|interviewing)\b/i,
+    /\b(?:can|could|would) (?:anyone|someone|you guys) (?:recommend|suggest|refer)\b/i, /\bany (?:recommendations|suggestions|referrals)\b/i,
+    /\bwho do you (?:use|recommend|guys use)\b/i, /\b(?:recommend|suggest) (?:me )?(?:a|an|some) (?:good |reliable |solid )?(?:amazon|ppc|agency|freelancer|expert|va|manager)/i,
+    /^\W*(?:need|looking for|seeking|hiring)\b[^.?!]{0,80}\b(?:for (?:my|our)|asap|urgent|budget|\$\d)/i,
+  ];
+  // «Looking for a reliable VA? Hello, I'm…» — риторический вопрос в начале продающего поста
+  const RHETORIC = /^\W*(?:are you\s+)?(?:looking for|need|want|searching for)\b[^.?!]{0,70}\?/i;
+
+  const sleepTick = () => new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = r; c.port2.postMessage(0); });
+  // во вкладке в фоне setTimeout засыпает до минуты — ждём через MessageChannel
+  async function sleep(ms) { const end = Date.now() + ms; while (Date.now() < end) { await sleepTick(); if (end - Date.now() > 40) await new Promise((r) => setTimeout(r, 30)); } }
+  const jitter = (a, b) => a + Math.random() * (b - a);
+  const clean = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+
+  // своя база в IndexedDB: виденные посты (ключ → когда видели)
+  function kv(mode, fn) {
+    return new Promise((res) => {
+      const o = indexedDB.open('lidy', 1);
+      o.onupgradeneeded = () => o.result.createObjectStore('kv');
+      o.onerror = () => res(null);
+      o.onsuccess = () => { const tx = o.result.transaction('kv', mode), r = fn(tx.objectStore('kv')); tx.oncomplete = () => { o.result.close(); res(r && r.result); }; tx.onerror = () => { o.result.close(); res(null); }; };
+    });
+  }
+  async function loadSeen() { return (await kv('readonly', (st) => st.get('seen'))) || {}; }
+  async function saveSeen(m) {
+    const lim = Date.now() - KEEP_DAYS * 864e5;
+    for (const k of Object.keys(m)) if (m[k] < lim) delete m[k];
+    await kv('readwrite', (st) => st.put(m, 'seen'));
+  }
+
+  function blocked() {
+    const p = location.pathname + location.search;
+    if (/\/checkpoint|captcha|two_step_verification|\/confirmemail/i.test(p)) return 'blocked';
+    if (/\/login|\/recover/i.test(p) || document.querySelector('input[name="pass"]')) return 'logout';
+    return '';
+  }
+
+  // «13 октябрь в 13:46», «4 дня назад», «5 ч.», «Вчера в 10:00», «October 13 at 1:46 PM», «2d», «5h» → ГГГГ-ММ-ДД
+  const MON = { янв: 0, фев: 1, мар: 2, апр: 3, мая: 4, май: 4, июн: 5, июл: 6, авг: 7, сен: 8, окт: 9, ноя: 10, дек: 11,
+    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+  function postDate(t) {
+    const s = clean(t).toLowerCase(), now = new Date(), day = (d) => d.toISOString().slice(0, 10), back = (h) => day(new Date(now - h * 3600e3));
+    let m;
+    if (/^(?:только что|just now)/.test(s)) return day(now);
+    if (/^(?:вчера|yesterday)/.test(s)) return back(24);
+    if ((m = s.match(/^(\d+)\s*(?:мин|min|m\b)/))) return day(now);
+    if ((m = s.match(/^(\d+)\s*(?:ч|h|hr|hour)/))) return back(+m[1]);
+    if ((m = s.match(/^(\d+)\s*(?:дн|д\.|день|дня|d\b|day)/))) return back(24 * m[1]);
+    if ((m = s.match(/^(\d+)\s*(?:нед|w\b|wk|week)/))) return back(24 * 7 * m[1]);
+    if ((m = s.match(/^(\d{1,2})\s+([а-я]{3})[а-я]*(?:\s+(\d{4}))?/)) && MON[m[2]] != null) return ymd(+m[3] || now.getFullYear(), MON[m[2]], +m[1], now);
+    if ((m = s.match(/^([a-z]{3})[a-z]*\s+(\d{1,2})(?:,?\s+(\d{4}))?/)) && MON[m[1]] != null) return ymd(+m[3] || now.getFullYear(), MON[m[1]], +m[2], now);
+    return null;
+  }
+  function ymd(y, mo, d, now) {
+    let dt = new Date(Date.UTC(y, mo, d));
+    if (dt > now) dt = new Date(Date.UTC(y - 1, mo, d)); // «13 декабря» в январе — прошлый год
+    return dt.toISOString().slice(0, 10);
+  }
+  const isDate = (t) => postDate(t) != null && clean(t).length < 40;
+
+  // ссылка на пост и ключ (тот же, что считает Пульт: src/leads.js normKey)
+  function postLink(a) {
+    const html = a.outerHTML;
+    const gid = (html.match(/\/groups\/(\d+|[\w.]+)\/(?:user|posts|permalink)?/) || [])[1];
+    const pid = (html.match(/multi_permalinks=(\d+)/) || html.match(/set=gm\.(\d+)/) || html.match(/\/groups\/[^/"]+\/(?:posts|permalink)\/(\d+)/) || [])[1];
+    if (gid && pid) return { url: `https://www.facebook.com/groups/${gid}/posts/${pid}/`, key: `fb:g:${gid}:${pid}` };
+    const story = (html.match(/story_fbid=(pfbid\w+|\d+)/) || [])[1];
+    if (story) {
+      const id = (html.match(/story_fbid=[^"&]+&amp;id=(\d+)/) || html.match(/[?&]id=(\d+)/) || [])[1] || '';
+      // ссылки без «?»: ответ скрипта с параметрами в адресах расширение Chrome не отдаёт Claude, а /<id>/posts/<story> — тот же пост
+      if (id) return { url: `https://www.facebook.com/${id}/posts/${story}`, key: `fb:p:${story}` };
+    }
+    const p = html.match(/facebook\.com\/([\w.]+)\/posts\/(pfbid\w+|\d+)/) || html.match(/href="\/([\w.]+)\/posts\/(pfbid\w+|\d+)/);
+    if (p) return { url: `https://www.facebook.com/${p[1]}/posts/${p[2]}`, key: `fb:p:${p[2]}` };
+    return null;
+  }
+
+  function read(a) {
+    const link = postLink(a);
+    if (!link) return null;
+    const links = [...a.querySelectorAll('a[href]')];
+    const abs = (h) => (h.startsWith('http') ? h : 'https://www.facebook.com' + h).split('?')[0];
+    // группа: ссылка ровно на /groups/<id>/ с названием; автор: ссылка на участника группы или на профиль
+    const grp = links.find((x) => /\/groups\/[^/]+\/?(?:\?|$)/.test(x.getAttribute('href')) && clean(x.innerText) && !isDate(x.innerText));
+    const who = links.find((x) => /\/groups\/[^/]+\/user\/\d+|\/profile\.php\?id=|^https:\/\/www\.facebook\.com\/[\w.]+\/?(?:\?|$)|^\/[\w.]+\/?(?:\?|$)/.test(x.getAttribute('href'))
+      && clean(x.innerText) && !isDate(x.innerText) && x !== grp);
+    let authorUrl = '';
+    if (who) { const u = who.getAttribute('href'), uid = (u.match(/\/user\/(\d+)/) || [])[1]; authorUrl = uid ? `https://www.facebook.com/${uid}` : /profile\.php/.test(u) ? `https://www.facebook.com/${(u.match(/id=(\d+)/) || [])[1] || ''}` : abs(u); }
+    const when = links.map((x) => clean(x.innerText)).find(isDate) || [...a.querySelectorAll('span')].map((x) => clean(x.innerText)).find(isDate) || '';
+    // текст поста: блок сообщения, иначе самый длинный абзац
+    const msg = a.querySelector('[data-ad-rendering-role="story_message"], [data-ad-preview="message"], [data-ad-comet-preview="message"]');
+    let text = msg ? clean(msg.innerText) : '';
+    if (!text) text = [...a.querySelectorAll('div[dir="auto"], span[dir="auto"]')].map((x) => clean(x.innerText)).sort((x, y) => y.length - x.length)[0] || '';
+    text = text.replace(/\s*(?:…\s*)?(?:Ещё|See more|Показать перевод|See translation)\s*$/i, '');
+    return { ...link, author: who ? clean(who.innerText).slice(0, 120) : '', author_url: authorUrl, place: grp ? clean(grp.innerText).slice(0, 160) : '', posted_at: postDate(when), text };
+  }
+
+  async function expand(a) {
+    const more = [...a.querySelectorAll('div[role="button"], span[role="button"]')].find((x) => /^(?:Ещё|See more)$/i.test(clean(x.innerText)));
+    if (more) { more.click(); await sleep(350); }
+  }
+
+  async function waitFeed(ms) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (blocked()) return false;
+      if (document.querySelector('[role="feed"] [aria-posinset], [aria-posinset]')) return true;
+      if (/(?:Ничего не найдено|We didn't find any results|No results)/i.test(document.body.innerText.slice(0, 5000))) return true;
+      await sleep(400);
+    }
+    return false;
+  }
+
+  // cfg: { query, maxPosts=60 — сколько постов просмотреть, scrolls=20, maxAgeDays=14, textMax=600 }
+  async function run(cfg = {}) {
+    const max = cfg.maxPosts || 60, scrolls = cfg.scrolls || 20, age = cfg.maxAgeDays || 14, tmax = cfg.textMax || 600;
+    const st = blocked(); if (st) return { status: st, at: location.pathname };
+    if (!(await waitFeed(15000))) { const b = blocked(); return b ? { status: b, at: location.pathname } : { status: 'glitch', note: 'лента поиска не появилась за 15 с' }; }
+    const seen = await loadSeen(), now = Date.now(), cutoff = new Date(now - age * 864e5).toISOString().slice(0, 10);
+    const got = new Map(), skip = { seen: 0, offer: 0, noask: 0, old: 0, off: 0, nolink: 0 };
+    let looked = 0, idle = 0;
+    for (let i = 0; i <= scrolls && looked < max; i++) {
+      const before = looked;
+      for (const a of document.querySelectorAll('[aria-posinset]')) {
+        const pos = a.getAttribute('aria-posinset');
+        if (a.dataset.lidy || clean(a.innerText).length < 40) continue;
+        a.dataset.lidy = '1'; looked++;
+        await expand(a);
+        const p = read(a);
+        if (!p) { skip.nolink++; continue; }
+        if (got.has(p.key)) continue;
+        if (seen[p.key]) { skip.seen++; continue; }
+        seen[p.key] = now;
+        if (!ON_TOPIC.test(p.text)) { skip.off++; continue; }
+        if (p.posted_at && p.posted_at < cutoff) { skip.old++; continue; }
+        const ask = ASK.some((r) => r.test(p.text)) && !RHETORIC.test(p.text);
+        if (!ask) { skip[OFFER.some((r) => r.test(p.text)) ? 'offer' : 'noask']++; continue; }
+        if (OFFER.slice(0, 4).some((r) => r.test(p.text))) { skip.offer++; continue; }
+        got.set(p.key, { pos: +pos, ...p, text: p.text.slice(0, tmax) });
+      }
+      if (blocked()) break;
+      idle = looked === before ? idle + 1 : 0;
+      if (idle >= 4) break; // выдача кончилась
+      window.scrollBy(0, jitter(1400, 2200));
+      await sleep(jitter(2200, 3800));
+    }
+    await saveSeen(seen);
+    const b = blocked();
+    if (b) return { status: b, at: location.pathname };
+    const fresh = [...got.values()].map(({ key, pos, ...x }, i) => ({ n: i + 1, ...x }));
+    return { status: 'ok', version: VERSION, query: cfg.query || '', looked, fresh, skip,
+      note: looked === 0 && !/(?:Ничего не найдено|didn't find)/i.test(document.body.innerText.slice(0, 5000)) ? 'на странице нет постов — проверить сборщик' : '' };
+  }
+  // один вызов javascript_tool живёт до 45 с, а прокрутка выдачи — минуту-две: start() запускает сбор и сразу отвечает,
+  // result() — null, пока идёт, потом итог (повторный result() отдаёт его же). Задание живёт в window до перехода на другую страницу.
+  function start(cfg) {
+    const job = window.__sborJob = { cfg, res: null, at: Date.now() };
+    run(cfg).then((r) => { job.res = r; }, (e) => { job.res = { status: 'glitch', note: 'ошибка сборщика: ' + String((e && e.message) || e).slice(0, 200) }; });
+    return 'started';
+  }
+  function result() { const j = window.__sborJob; return j ? j.res && JSON.stringify(j.res) : JSON.stringify({ status: 'glitch', note: 'сбор не запускался на этой странице' }); }
+  // забыть, что посты видели (после сбоя отправки: ключи из пачки снова пройдут фильтр)
+  async function forget(keys) { const m = await loadSeen(); for (const k of keys || []) delete m[k]; await saveSeen(m); }
+  window.__sbor = { run, start, result, forget, version: VERSION };
+})();

@@ -1,0 +1,13 @@
+{
+  "note": "Запросы на случай, когда Пульт недоступен. Основной список ведут люди на Пульте: Лиды → Запросы.",
+  "queries": [
+    { "network": "facebook", "text": "looking for amazon ppc agency" },
+    { "network": "facebook", "text": "need amazon ppc manager" },
+    { "network": "facebook", "text": "recommend amazon agency" },
+    { "network": "facebook", "text": "looking for amazon account manager" },
+    { "network": "facebook", "text": "hiring amazon ppc specialist" },
+    { "network": "facebook", "text": "amazon listing optimization help" },
+    { "network": "facebook", "text": "looking for amazon marketing agency" },
+    { "network": "facebook", "text": "who manages your amazon ppc" }
+  ]
+}
