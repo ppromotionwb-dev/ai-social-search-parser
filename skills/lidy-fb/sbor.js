@@ -7,10 +7,14 @@
 // IndexedDB лежит только список виденных постов (проверено 27.10.2026).
 // Ничего не нажимает, кроме «Ещё» в тексте поста; пароли и формы не трогает. Капча, вход, проверка — status, не обход.
 (() => {
-  const VERSION = '2026-10-27.5';
+  const VERSION = '2026-10-28.1';
   const KEEP_DAYS = 120;
   // про продажи на Amazon: без этих слов пост не наш («PPC» в одиночку — и Google Ads, и Puerto Princesa City)
   const ON_TOPIC = /amazon|\bfba\b|seller ?central|vendor central|\basin\b|\bacos\b|\btacos\b/i;
+  // «купил на Amazon», «посоветуйте костюм Санты» — Amazon как магазин; нужен хоть один признак продавца
+  const SELLER_SIDE = /\bsell(?:er|ers|ing)?\b|sell on|listing|\bppc\b|\bads\b|advertis|sponsored|\bbrand|\bfba\b|\basin\b|\bacos\b|inventory|product launch|\bva\b|virtual assistant|agenc|account manag|seller ?central|vendor central/i;
+  // Amazon глазами покупателя или работника склада — не наш: сборы по wishlist, подарочные карты, кино, доставка
+  const BUYER_SIDE = /wish ?list|gift ?card|prime (?:video|day deal)|amazon (?:smile|delivery|driver|flex|warehouse|locker|return)|\bdonat(?:e|ion)|fundrais/i;
   // пишет исполнитель, а не заказчик: «я делаю PPC», «пишите в личку», «наши услуги», реклама вебинаров и кейсы.
   // Первые четыре — «я/мы исполнитель»: такой пост отсеивается, даже если в нём есть «looking for»
   const OFFER = [
@@ -125,7 +129,8 @@
   }
 
   async function expand(a) {
-    const more = [...a.querySelectorAll('div[role="button"], span[role="button"]')].find((x) => /^(?:Ещё|See more)$/i.test(clean(x.innerText)));
+    // «Ещё» внутри ссылки (у роликов — /reel/…) уводит со страницы поиска, и лента пропадает: такие не нажимаем
+    const more = [...a.querySelectorAll('div[role="button"], span[role="button"]')].find((x) => /^(?:Ещё|See more)$/i.test(clean(x.innerText)) && !x.closest('a'));
     if (more) { more.click(); await sleep(350); }
   }
 
@@ -142,43 +147,57 @@
 
   // cfg: { query, maxPosts=60 — сколько постов просмотреть, scrolls=20, maxAgeDays=14, textMax=600 }
   async function run(cfg = {}) {
-    const max = cfg.maxPosts || 60, scrolls = cfg.scrolls || 20, age = cfg.maxAgeDays || 14, tmax = cfg.textMax || 600;
+    const max = cfg.maxPosts || 60, scrolls = cfg.scrolls || 20, age = cfg.maxAgeDays || 14, tmax = cfg.textMax || 500;
     const st = blocked(); if (st) return { status: st, at: location.pathname };
     if (!(await waitFeed(15000))) { const b = blocked(); return b ? { status: b, at: location.pathname } : { status: 'glitch', note: 'лента поиска не появилась за 15 с' }; }
     const seen = await loadSeen(), now = Date.now(), cutoff = new Date(now - age * 864e5).toISOString().slice(0, 10);
     const got = new Map(), skip = { seen: 0, offer: 0, noask: 0, old: 0, off: 0, nolink: 0 };
-    let looked = 0, idle = 0;
-    for (let i = 0; i <= scrolls && looked < max; i++) {
-      const before = looked;
+    const why = []; // cfg.debug: начало отсеянных постов — проверить, не теряем ли заказчиков
+    const drop = (k, p) => { skip[k]++; if (cfg.debug && p && k !== 'seen') why.push(k + ': ' + p.text.slice(0, 110)); };
+    // прочитанное — по номеру поста в выдаче (aria-posinset), а не по узлу: Facebook переиспользует узлы ленты под новые посты
+    const read1 = new Set();
+    // окно Chrome свёрнуто или перекрыто — вкладка скрыта, Facebook не рисует ленту и не догружает выдачу (проверено 27.10.2026)
+    let looked = 0, idle = 0, hid = 0;
+    // Facebook догружает выдачу, только когда страница внизу, и не сразу: листаем экран за экраном (посты читаются, пока
+    // они на экране — ушедшие далеко за край он очищает), внизу ждём подгрузку; три раза подряд ничего нового — выдача кончилась
+    const readVisible = async () => {
       for (const a of document.querySelectorAll('[aria-posinset]')) {
         const pos = a.getAttribute('aria-posinset');
-        if (a.dataset.lidy || clean(a.innerText).length < 40) continue;
-        a.dataset.lidy = '1'; looked++;
+        if (read1.has(pos) || clean(a.innerText).length < 40) continue;
+        read1.add(pos); looked++;
         await expand(a);
         const p = read(a);
         if (!p) { skip.nolink++; continue; }
         if (got.has(p.key)) continue;
-        if (seen[p.key]) { skip.seen++; continue; }
+        if (seen[p.key] && !cfg.debug) { skip.seen++; continue; }
         seen[p.key] = now;
-        if (!ON_TOPIC.test(p.text)) { skip.off++; continue; }
-        if (p.posted_at && p.posted_at < cutoff) { skip.old++; continue; }
+        if (!ON_TOPIC.test(p.text) || !SELLER_SIDE.test(p.text) || BUYER_SIDE.test(p.text)) { drop('off', p); continue; }
+        if (p.posted_at && p.posted_at < cutoff) { drop('old', p); continue; }
         const ask = ASK.some((r) => r.test(p.text)) && !RHETORIC.test(p.text);
-        if (!ask) { skip[OFFER.some((r) => r.test(p.text)) ? 'offer' : 'noask']++; continue; }
-        if (OFFER.slice(0, 4).some((r) => r.test(p.text))) { skip.offer++; continue; }
+        if (!ask) { drop(OFFER.some((r) => r.test(p.text)) ? 'offer' : 'noask', p); continue; }
+        if (OFFER.slice(0, 4).some((r) => r.test(p.text))) { drop('offer', p); continue; }
         got.set(p.key, { pos: +pos, ...p, text: p.text.slice(0, tmax) });
       }
-      if (blocked()) break;
-      idle = looked === before ? idle + 1 : 0;
-      if (idle >= 4) break; // выдача кончилась
-      window.scrollBy(0, jitter(1400, 2200));
-      await sleep(jitter(2200, 3800));
+    };
+    const atBottom = () => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 300;
+    for (let i = 0; i <= scrolls && looked < max && !blocked(); i++) {
+      while (!atBottom() && looked < max) { await readVisible(); window.scrollBy(0, window.innerHeight * jitter(0.7, 0.9)); await sleep(jitter(500, 900)); }
+      await readVisible();
+      const before = looked;
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      await sleep(jitter(3800, 5500));
+      await readVisible();
+      idle = looked === before && atBottom() ? idle + 1 : 0;
+      if (document.hidden) hid++;
+      if (idle >= 3) break;
     }
-    await saveSeen(seen);
+    if (!cfg.debug) await saveSeen(seen);
     const b = blocked();
     if (b) return { status: b, at: location.pathname };
     const fresh = [...got.values()].map(({ key, pos, ...x }, i) => ({ n: i + 1, ...x }));
-    return { status: 'ok', version: VERSION, query: cfg.query || '', looked, fresh, skip,
-      note: looked === 0 && !/(?:Ничего не найдено|didn't find)/i.test(document.body.innerText.slice(0, 5000)) ? 'на странице нет постов — проверить сборщик' : '' };
+    return { status: 'ok', version: VERSION, query: cfg.query || '', looked, fresh, skip, ...(cfg.debug ? { why } : {}),
+      hidden: hid > 0,
+      note: hid ? 'окно Chrome было скрыто (свёрнуто или перекрыто) — Facebook не догружал выдачу' : looked === 0 && !/(?:Ничего не найдено|didn't find)/i.test(document.body.innerText.slice(0, 5000)) ? 'на странице нет постов — проверить сборщик' : '' };
   }
   // один вызов javascript_tool живёт до 45 с, а прокрутка выдачи — минуту-две: start() запускает сбор и сразу отвечает,
   // result() — null, пока идёт, потом итог (повторный result() отдаёт его же). Задание живёт в window до перехода на другую страницу.
@@ -188,7 +207,49 @@
     return 'started';
   }
   function result() { const j = window.__sborJob; return j ? j.res && JSON.stringify(j.res) : JSON.stringify({ status: 'glitch', note: 'сбор не запускался на этой странице' }); }
+
+  // Весь прогон за один заход: Facebook — одностраничный, и если сменить адрес через history + popstate, он сам рисует
+  // выдачу «Публикации → Свежие» по новому запросу, а этот код остаётся в странице (проверено 27.10.2026). Поэтому Claude
+  // передаёт сборщик один раз и дальше только спрашивает итог: progress() — сколько прошло, result() — всё целиком.
+  const RECENT = 'eyJyZWNlbnRfcG9zdHM6MCI6IntcIm5hbWVcIjpcInJlY2VudF9wb3N0c1wiLFwiYXJnc1wiOlwiXCJ9In0%3D';
+  async function go(q) {
+    window.scrollTo(0, 0);
+    history.pushState({}, '', '/search/posts/?q=' + encodeURIComponent(q) + '&filters=' + RECENT);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+    const end = Date.now() + 20000, want = q.toLowerCase();
+    while (Date.now() < end && !document.title.toLowerCase().includes(want)) await sleep(300);
+    await sleep(jitter(1800, 3000));
+    return document.title.toLowerCase().includes(want);
+  }
+  // queries — список строк; cfg — как у run (+ pauseMin/pauseMax, мс между запросами: по умолчанию 30–60 с)
+  function sweep(queries, cfg = {}) {
+    const job = window.__sborJob = { cfg, res: null, at: Date.now(), done: [], total: queries.length };
+    (async () => {
+      for (let i = 0; i < queries.length; i++) {
+        const q = queries[i];
+        const ok = await go(q);
+        const r = ok ? await run({ ...cfg, query: q }) : { status: 'glitch', query: q, note: 'выдача по запросу не открылась за 20 с' };
+        r.query = q; job.done.push(r);
+        if (r.status === 'blocked' || r.status === 'logout') break;
+        if (i < queries.length - 1) await sleep(jitter(cfg.pauseMin || 30000, cfg.pauseMax || 60000));
+      }
+      job.res = { status: job.done.some((r) => r.status === 'blocked' || r.status === 'logout') ? job.done[job.done.length - 1].status : 'ok', version: VERSION, queries: job.done };
+    })().catch((e) => { job.res = { status: 'glitch', version: VERSION, note: 'ошибка сборщика: ' + String((e && e.message) || e).slice(0, 200), queries: job.done }; });
+    return 'started ' + queries.length;
+  }
+  function progress() { const j = window.__sborJob; return j ? `${j.done.length} из ${j.total || 1}${j.res ? ' — готово' : ''}, ${Math.round((Date.now() - j.at) / 1000)} с` : 'нет задания'; }
   // забыть, что посты видели (после сбоя отправки: ключи из пачки снова пройдут фильтр)
   async function forget(keys) { const m = await loadSeen(); for (const k of keys || []) delete m[k]; await saveSeen(m); }
-  window.__sbor = { run, start, result, forget, version: VERSION };
+  // ответ javascript_tool обрезается примерно на 1000 символов — итог обхода отдаём по кусочку:
+  // сводка по запросам, затем каждый пост отдельно
+  // сводка — по 4 запроса за вызов: summary(0), summary(4), … пока i последнего меньше total − 1
+  function summary(from = 0) {
+    const j = window.__sborJob;
+    if (!j || !j.done) return JSON.stringify({ status: 'glitch', note: 'обход не запускался на этой странице' });
+    return JSON.stringify({ status: j.res ? j.res.status : 'running', note: (j.res && j.res.note) || '', total: j.done.length,
+      queries: j.done.slice(from, from + 4).map((r, k) => ({ i: from + k, q: r.query, status: r.status, looked: r.looked || 0, cand: (r.fresh || []).length,
+        skip: r.skip ? { offer: r.skip.offer, noask: r.skip.noask, off: r.skip.off, old: r.skip.old } : undefined, hidden: !!r.hidden, note: r.note || '' })) });
+  }
+  function post(i, n) { const r = (window.__sborJob && window.__sborJob.done || [])[i], p = r && (r.fresh || [])[n - 1]; return p ? JSON.stringify(p) : 'null'; }
+  window.__sbor = { run, start, sweep, progress, result, summary, post, forget, version: VERSION };
 })();
